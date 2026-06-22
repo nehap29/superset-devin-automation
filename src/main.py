@@ -26,8 +26,6 @@ from src.state import load_state, save_state
 logging_setup.setup()
 logger = logging.getLogger(__name__)
 
-_TERMINAL_STATUSES = frozenset({"finished", "errored", "stopped"})
-
 
 def run_once() -> None:
     """Execute a single scan → create → poll → report cycle."""
@@ -69,7 +67,7 @@ def run_once() -> None:
 
         # 4. Poll existing sessions for status changes
         for number, record in list(state.records.items()):
-            if record.status in _TERMINAL_STATUSES:
+            if record.status in ("finished", "expired"):
                 continue
             try:
                 status = get_session_status(record.session_id)
@@ -79,8 +77,17 @@ def run_once() -> None:
                 has_new_pr = bool(status.pr_url and not record.pr_url)
 
                 if changed or has_new_pr:
+                    # If session is blocked but has a PR, mark as finished
+                    effective_status = status.status
+                    if status.is_effectively_done and status.status == "blocked":
+                        effective_status = "finished"
+                        logger.info(
+                            "Issue #%d: session blocked with PR — marking finished",
+                            number,
+                        )
+
                     state.update_status(
-                        number, status.status, status.pr_url
+                        number, effective_status, status.pr_url
                     )
                     save_state(state)
                     if notify_session_update(state.records[number]):

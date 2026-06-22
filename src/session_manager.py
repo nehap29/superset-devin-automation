@@ -19,21 +19,40 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class SessionStatus:
-    """Parsed response from the Devin session-status endpoint."""
+    """Parsed response from the Devin v1 session-status endpoint.
+
+    V1 API fields used:
+      - ``status_enum``: working | blocked | expired | finished | …
+      - ``pull_request.url``: PR URL (if one was created)
+    """
 
     status: str
     pr_url: str = ""
 
+    @property
+    def is_terminal(self) -> bool:
+        """True if the session has reached a final state."""
+        return self.status in _TERMINAL_STATUSES
+
+    @property
+    def is_effectively_done(self) -> bool:
+        """True if terminal OR blocked-with-PR (task complete, awaiting user)."""
+        return self.is_terminal or (self.status == "blocked" and bool(self.pr_url))
+
     @classmethod
     def from_api(cls, data: dict[str, Any]) -> SessionStatus:
-        pr_url = ""
-        structured = data.get("structured_outputs")
-        if isinstance(structured, dict):
-            pr_url = structured.get("pr_url", "")
+        # PR URL lives at pull_request.url in the v1 API
+        pr_obj = data.get("pull_request")
+        pr_url = pr_obj.get("url", "") if isinstance(pr_obj, dict) else ""
+
         return cls(
             status=data.get("status_enum", "unknown"),
             pr_url=pr_url,
         )
+
+
+# V1 API terminal statuses (session will not change further)
+_TERMINAL_STATUSES = frozenset({"finished", "expired"})
 
 
 # ── Prompt builder ───────────────────────────────────────────────────
@@ -97,6 +116,6 @@ def create_session(issue: Issue) -> SessionRecord:
 
 def get_session_status(session_id: str) -> SessionStatus:
     """Poll the current status of a Devin session."""
-    url = f"{Config.DEVIN_API_URL}/session/{session_id}"
+    url = f"{Config.DEVIN_API_URL}/sessions/{session_id}"
     resp = get(url, headers=devin_headers())
     return SessionStatus.from_api(resp.json())

@@ -27,11 +27,9 @@ class SessionRecord:
     status: str = "created"
     pr_url: str = ""
 
-    # Possible statuses (for documentation; not enforced as enum to stay
-    # forward-compatible with new Devin API statuses):
-    #   created  — session request sent
-    #   running  — Devin is actively working
-    #   blocked  — Devin is waiting on input
-    #   finished — session completed successfully
-    #   errored  — session ended with an error
-    #   stopped  — session was manually terminated
+    # Devin v1 API status_enum values (not enforced as enum to stay
+    # forward-compatible):
+    #   working   — Devin is actively working
+    #   blocked   — Devin is waiting on user input
+    #   finished  — session completed (or blocked+PR, promoted by us)
+    #   expired   — session timed out
