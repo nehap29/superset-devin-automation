@@ -1,94 +1,106 @@
 # Superset Devin Automation
 
-Dockerized automation that periodically scans open GitHub issues in
-[nehap29/superset](https://github.com/nehap29/superset), creates a
-[Devin](https://devin.ai) session for each new issue, and posts status updates
-back on the issue as the session progresses.
+This repo automates bug-fixing for [nehap29/superset](https://github.com/nehap29/superset).
 
-## How it works
+It runs inside Docker on a schedule, checks for new GitHub issues, and hands each one to [Devin](https://devin.ai) to fix. Devin reads the issue, writes a fix, and opens a pull request — all without human intervention.
 
-```
-┌─────────────┐  scan   ┌─────────────┐  create   ┌─────────────┐
-│  GitHub API  │◄───────│   Scanner    │─────────►│  Devin API   │
-│  (issues)    │        │  (periodic)  │          │  (sessions)  │
-└──────┬───────┘        └──────┬───────┘          └──────┬───────┘
-       │                       │                         │
-       │  comment              │  persist                │  poll
-       ▼                       ▼                         ▼
-  Issue gets           state.json            Session status/PR URL
-  status update        (dedup)               fed back to reporter
-```
+---
 
-Each cycle:
+## What it does
 
-1. **Fetch** all open issues from the target repo via the GitHub API.
-2. **Deduplicate** against a local JSON state file so each issue triggers at
-   most one Devin session.
-3. **Create** a Devin session per new issue with a prompt derived from the
-   issue title and body.
-4. **Poll** existing sessions for status changes (running → finished, PR
-   created, etc.).
-5. **Comment** on the GitHub issue with session links and PR URLs.
-6. **Log** a Markdown summary report every cycle.
+Every hour (configurable), the automation:
 
-## Quick start
+1. **Scans** `nehap29/superset` for open GitHub issues.
+2. **Skips** any issue it has already seen (tracked in a local JSON file).
+3. **Creates a Devin session** for each new issue — Devin receives the issue title, description, and instructions to open a PR.
+4. **Checks back** on sessions it started earlier and picks up status changes or PR links.
+5. **Comments on the GitHub issue** with a link to the Devin session and, once available, the PR.
+6. **Logs a summary** of all tracked issues and their statuses.
+
+---
+
+## How to run
+
+### Prerequisites
+
+- [Docker](https://docs.docker.com/get-docker/) installed
+- A **GitHub personal access token** with `repo` scope ([create one here](https://github.com/settings/tokens))
+- A **Devin API key** ([docs](https://docs.devin.ai/api-reference/overview))
+
+### Steps
 
 ```bash
-# 1. Clone
+# 1. Clone the repo
 git clone https://github.com/nehap29/superset-devin-automation.git
 cd superset-devin-automation
 
-# 2. Configure
+# 2. Create your config file
 cp .env.example .env
-# Edit .env — fill in GITHUB_TOKEN and DEVIN_API_KEY
 
-# 3. Run with Docker Compose
+# 3. Open .env and fill in your two keys:
+#    GITHUB_TOKEN=ghp_...
+#    DEVIN_API_KEY=...
+
+# 4. Start the automation
 docker compose up --build
 ```
 
-### Run a single scan (no loop)
+It will scan immediately on startup, then repeat every hour. Logs print to the console.
+
+### Run once (no loop)
+
+If you just want a single scan instead of a continuous loop:
 
 ```bash
 docker compose run --rm scanner once
 ```
 
-## Configuration
-
-All settings are read from environment variables (see `.env.example`):
-
-| Variable | Required | Default | Description |
-|----------|----------|---------|-------------|
-| `GITHUB_TOKEN` | yes | — | GitHub personal access token with `repo` scope |
-| `DEVIN_API_KEY` | yes | — | Devin API key |
-| `TARGET_REPO` | no | `nehap29/superset` | Owner/repo to scan |
-| `SCAN_INTERVAL_SECONDS` | no | `3600` | Seconds between scans |
-| `MAX_ACU_LIMIT` | no | `10` | Max ACUs per Devin session |
-| `POST_STATUS_COMMENTS` | no | `true` | Post comments on issues |
-| `ISSUE_LABELS` | no | _(all)_ | Comma-separated label filter |
-| `LOG_LEVEL` | no | `INFO` | Python log level |
-| `STATE_FILE` | no | `/data/state.json` | Path to state persistence file |
-
-## Project structure
-
-```
-src/
-  config.py          — Environment-based configuration
-  scanner.py         — GitHub issue fetcher
-  session_manager.py — Devin API client (create & poll sessions)
-  state.py           — JSON-backed dedup / tracking state
-  reporter.py        — GitHub comment poster & report generator
-  main.py            — Entrypoint (loop or one-shot mode)
-Dockerfile
-docker-compose.yml
-.env.example
-```
-
-## Development
+### Run without Docker
 
 ```bash
 python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 
-# Single scan (requires env vars)
-python -m src.main once
+# Set env vars, then:
+python -m src.main once   # single scan
+python -m src.main        # continuous loop
 ```
+
+---
+
+## Configuration
+
+Set these in your `.env` file. Only the first two are required.
+
+| Variable | Required | Default | What it controls |
+|----------|----------|---------|------------------|
+| `GITHUB_TOKEN` | **yes** | — | GitHub token with `repo` scope |
+| `DEVIN_API_KEY` | **yes** | — | Devin API key |
+| `TARGET_REPO` | no | `nehap29/superset` | Which repo to scan for issues |
+| `SCAN_INTERVAL_SECONDS` | no | `3600` | Seconds between scans (default: 1 hour) |
+| `MAX_ACU_LIMIT` | no | `10` | Cost cap per Devin session (in ACUs) |
+| `POST_STATUS_COMMENTS` | no | `true` | Whether to comment on GitHub issues |
+| `ISSUE_LABELS` | no | _(all issues)_ | Only scan issues with these labels (comma-separated) |
+| `LOG_LEVEL` | no | `INFO` | Python log level (`DEBUG`, `INFO`, `WARNING`, `ERROR`) |
+
+---
+
+## Repo structure
+
+```
+superset-devin-automation/
+├── src/
+│   ├── main.py              # Entrypoint — runs the scan loop
+│   ├── scanner.py           # Fetches open issues from GitHub
+│   ├── session_manager.py   # Creates Devin sessions & polls their status
+│   ├── state.py             # Tracks which issues already have sessions (JSON file)
+│   ├── reporter.py          # Posts comments on GitHub issues & generates reports
+│   └── config.py            # Reads configuration from environment variables
+├── Dockerfile               # Builds the Python container
+├── docker-compose.yml       # Runs the container with a persistent data volume
+├── requirements.txt         # Python dependencies (just `requests`)
+├── .env.example             # Template for your config — copy to .env
+└── .gitignore
+```
+
+**Where to start reading:** `src/main.py` — it calls everything else in order.
