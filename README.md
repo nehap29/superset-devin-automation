@@ -15,7 +15,7 @@ Every hour (configurable), the automation:
 3. **Creates a Devin session** for each new issue — Devin receives the issue title, description, and instructions to open a PR.
 4. **Checks back** on sessions it started earlier and picks up status changes or PR links.
 5. **Comments on the GitHub issue** with a link to the Devin session and, once available, the PR.
-6. **Logs a summary** of all tracked issues and their statuses.
+6. **Logs a summary report** with system health, success rates, and per-issue status.
 
 ---
 
@@ -49,8 +49,6 @@ It will scan immediately on startup, then repeat every hour. Logs print to the c
 
 ### Run once (no loop)
 
-If you just want a single scan instead of a continuous loop:
-
 ```bash
 docker compose run --rm scanner once
 ```
@@ -82,6 +80,56 @@ Set these in your `.env` file. Only the first two are required.
 | `POST_STATUS_COMMENTS` | no | `true` | Whether to comment on GitHub issues |
 | `ISSUE_LABELS` | no | _(all issues)_ | Only scan issues with these labels (comma-separated) |
 | `LOG_LEVEL` | no | `INFO` | Python log level (`DEBUG`, `INFO`, `WARNING`, `ERROR`) |
+| `LOG_FORMAT` | no | `text` | `text` for human-readable, `json` for log aggregators |
+| `METRICS_FILE` | no | `/data/metrics.json` | Path to cumulative metrics file |
+| `REPORT_FILE` | no | `/data/report.md` | Path to the generated status report |
+
+---
+
+## Observability and monitoring
+
+The automation is designed so an engineering leader can answer **"Is this working?"** at a glance.
+
+### What gets tracked
+
+Every scan cycle records:
+
+| Metric | Description |
+|--------|-------------|
+| **Issues scanned** | How many open issues were found |
+| **Sessions created** | How many new Devin sessions were started |
+| **Sessions failed** | How many session-creation attempts failed |
+| **Sessions polled** | How many in-progress sessions were checked |
+| **Status changes** | How many sessions transitioned state (e.g., running → finished) |
+| **Comments posted** | How many GitHub issue comments were posted |
+| **Errors** | Any errors that occurred (with context) |
+| **Cycle duration** | Wall-clock time for the full scan cycle |
+
+### Where to find it
+
+| Output | Location | Format |
+|--------|----------|--------|
+| **Console logs** | `docker compose logs -f` | Text or JSON (set `LOG_FORMAT=json`) |
+| **Status report** | `/data/report.md` inside the container | Markdown with health table, outcomes, issue details, cycle history |
+| **Metrics file** | `/data/metrics.json` inside the container | JSON with cumulative stats + last 50 cycles |
+| **GitHub comments** | On each issue in the target repo | Markdown tables with session links and PR URLs |
+
+### Reading the status report
+
+The report (`/data/report.md`) has four sections:
+
+1. **System Health** — total cycles, issues tracked, sessions created, success rate, average cycle duration, last scan time.
+2. **Session Outcomes** — breakdown by status (`created`, `running`, `finished`, `errored`).
+3. **Issue Details** — per-issue table with links to the GitHub issue, Devin session, and PR.
+4. **Recent Cycle History** — last 10 cycles with timing and throughput.
+
+### JSON logging for production
+
+Set `LOG_FORMAT=json` to emit structured JSON logs (one object per line), ready for ingestion by log aggregators like Datadog, ELK, or CloudWatch:
+
+```json
+{"timestamp": "2026-06-22T00:15:00+00:00", "level": "INFO", "logger": "src.main", "message": "3 new issue(s) to process"}
+```
 
 ---
 
@@ -91,16 +139,38 @@ Set these in your `.env` file. Only the first two are required.
 superset-devin-automation/
 ├── src/
 │   ├── main.py              # Entrypoint — runs the scan loop
+│   ├── config.py            # Environment-based configuration
+│   ├── models.py            # Shared data models (Issue, SessionRecord)
 │   ├── scanner.py           # Fetches open issues from GitHub
 │   ├── session_manager.py   # Creates Devin sessions & polls their status
-│   ├── state.py             # Tracks which issues already have sessions (JSON file)
-│   ├── reporter.py          # Posts comments on GitHub issues & generates reports
-│   └── config.py            # Reads configuration from environment variables
-├── Dockerfile               # Builds the Python container
+│   ├── state.py             # Tracks which issues already have sessions (JSON, atomic writes)
+│   ├── reporter.py          # Posts GitHub comments & generates executive summary reports
+│   ├── metrics.py           # Per-cycle and cumulative analytics tracking
+│   ├── http_client.py       # Shared HTTP client with retry logic
+│   └── logging_setup.py     # Configurable text/JSON logging
+├── Dockerfile               # Python 3.12-slim container
 ├── docker-compose.yml       # Runs the container with a persistent data volume
 ├── requirements.txt         # Python dependencies (just `requests`)
-├── .env.example             # Template for your config — copy to .env
+├── .env.example             # Template — copy to .env and fill in keys
 └── .gitignore
 ```
 
 **Where to start reading:** `src/main.py` — it calls everything else in order.
+
+### Module dependency graph
+
+```
+main.py
+  ├── config.py          (env vars)
+  ├── logging_setup.py   (log format)
+  ├── metrics.py         (cycle tracking)
+  ├── scanner.py         (GitHub issues)
+  │     └── http_client.py
+  ├── session_manager.py (Devin API)
+  │     └── http_client.py
+  ├── reporter.py        (comments + reports)
+  │     ├── http_client.py
+  │     └── metrics.py
+  └── state.py           (persistence)
+        └── models.py
+```

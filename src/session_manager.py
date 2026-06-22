@@ -1,20 +1,47 @@
 """Creates and monitors Devin sessions via the REST API."""
 
-import logging
-from datetime import datetime, timezone
+from __future__ import annotations
 
-import requests
+import logging
+from dataclasses import dataclass
+from datetime import datetime, timezone
+from typing import Any
 
 from src.config import Config
-from src.scanner import Issue
-from src.state import SessionRecord
+from src.http_client import devin_headers, get, post
+from src.models import Issue, SessionRecord
 
 logger = logging.getLogger(__name__)
 
 
+# ── Response model ───────────────────────────────────────────────────
+
+
+@dataclass
+class SessionStatus:
+    """Parsed response from the Devin session-status endpoint."""
+
+    status: str
+    pr_url: str = ""
+
+    @classmethod
+    def from_api(cls, data: dict[str, Any]) -> SessionStatus:
+        pr_url = ""
+        structured = data.get("structured_outputs")
+        if isinstance(structured, dict):
+            pr_url = structured.get("pr_url", "")
+        return cls(
+            status=data.get("status_enum", "unknown"),
+            pr_url=pr_url,
+        )
+
+
+# ── Prompt builder ───────────────────────────────────────────────────
+
+
 def _build_prompt(issue: Issue) -> str:
-    """Build a Devin session prompt from a GitHub issue."""
-    prompt_parts = [
+    """Construct the Devin session prompt from an issue."""
+    return "\n".join([
         f"## GitHub Issue #{issue.number}: {issue.title}",
         "",
         f"Repository: {Config.TARGET_REPO}",
@@ -29,37 +56,31 @@ def _build_prompt(issue: Issue) -> str:
         "3. Implement the fix or feature described in the issue.",
         "4. Create a pull request with your changes.",
         "5. Ensure lint and tests pass.",
-    ]
-    return "\n".join(prompt_parts)
+    ])
+
+
+# ── Public API ───────────────────────────────────────────────────────
 
 
 def create_session(issue: Issue) -> SessionRecord:
-    """Create a Devin session for the given issue. Returns a SessionRecord."""
+    """Create a Devin session for the given issue."""
     url = f"{Config.DEVIN_API_URL}/sessions"
-    headers = {
-        "Authorization": f"Bearer {Config.DEVIN_API_KEY}",
-        "Content-Type": "application/json",
-    }
-    prompt = _build_prompt(issue)
     payload = {
-        "prompt": prompt,
+        "prompt": _build_prompt(issue),
         "title": f"[Auto] Issue #{issue.number}: {issue.title}",
-        "tags": [
-            "superset-automation",
-            f"issue-{issue.number}",
-        ],
+        "tags": ["superset-automation", f"issue-{issue.number}"],
         "max_acu_limit": Config.MAX_ACU_LIMIT,
         "idempotent": True,
     }
 
-    resp = requests.post(url, headers=headers, json=payload, timeout=60)
-    resp.raise_for_status()
-    data = resp.json()
+    resp = post(url, headers=devin_headers(), json_body=payload, timeout=60)
+    data: dict[str, Any] = resp.json()
 
-    session_id = data["session_id"]
-    session_url = data["url"]
+    session_id: str = data["session_id"]
+    session_url: str = data["url"]
+
     logger.info(
-        "Created Devin session %s for issue #%d — %s",
+        "Created session %s for issue #%d — %s",
         session_id,
         issue.number,
         session_url,
@@ -74,11 +95,8 @@ def create_session(issue: Issue) -> SessionRecord:
     )
 
 
-def get_session_status(session_id: str) -> dict:
-    """Poll the status of an existing Devin session."""
+def get_session_status(session_id: str) -> SessionStatus:
+    """Poll the current status of a Devin session."""
     url = f"{Config.DEVIN_API_URL}/session/{session_id}"
-    headers = {"Authorization": f"Bearer {Config.DEVIN_API_KEY}"}
-
-    resp = requests.get(url, headers=headers, timeout=30)
-    resp.raise_for_status()
-    return resp.json()
+    resp = get(url, headers=devin_headers())
+    return SessionStatus.from_api(resp.json())
