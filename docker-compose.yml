@@ -1,0 +1,13 @@
+version: "3.9"
+
+services:
+  scanner:
+    build: .
+    env_file: .env
+    volumes:
+      # Persist state across container restarts
+      - scanner-data:/data
+    restart: unless-stopped
+
+volumes:
+  scanner-data:
