@@ -101,6 +101,7 @@ class MetricsSummary:
             "duration_s": round(cycle.duration_seconds, 2),
             "scanned": cycle.issues_scanned,
             "created": cycle.sessions_created,
+            "done": cycle.status_changes_detected,
             "failed": cycle.sessions_failed,
             "errors": len(cycle.errors),
         }

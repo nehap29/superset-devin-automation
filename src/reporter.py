@@ -112,30 +112,29 @@ def generate_summary_report(state: State) -> str:
     status_counts = state.count_by_status()
 
     lines = [
-        "# Superset Issue Automation — Status Report",
+        "=" * 60,
+        "  SUPERSET ISSUE AUTOMATION — STATUS REPORT",
+        f"  Generated {now}",
+        "=" * 60,
         "",
-        f"_Generated {now}_",
-        "",
-        "---",
-        "",
-        "## System Health",
-        "",
+        "SYSTEM HEALTH",
+        "-" * 40,
         _health_table(metrics, state),
         "",
-        "## Session Outcomes",
-        "",
+        "SESSION OUTCOMES",
+        "-" * 40,
         _outcomes_table(status_counts),
         "",
-        "## Issue Details",
-        "",
+        "ISSUE DETAILS",
+        "-" * 40,
         _issue_table(state),
         "",
     ]
 
     if metrics.recent_cycles:
         lines += [
-            "## Recent Cycle History",
-            "",
+            "RECENT CYCLE HISTORY",
+            "-" * 40,
             _cycle_history_table(metrics),
             "",
         ]
@@ -152,54 +151,59 @@ def generate_summary_report(state: State) -> str:
 def _health_table(metrics: MetricsSummary, state: State) -> str:
     counts = state.count_by_status()
     blocked = counts.get("blocked", 0)
-    blocked_display = f"**{blocked}** (needs attention)" if blocked else "0"
-    return "\n".join([
-        "| Metric | Value |",
-        "|--------|-------|",
-        f"| Total scan cycles | {metrics.total_cycles} |",
-        f"| Issues tracked | {len(state.records)} |",
-        f"| Sessions created | {metrics.total_sessions_created} |",
-        f"| Session creation success rate | {metrics.success_rate()}% |",
-        f"| Blocked sessions | {blocked_display} |",
-        f"| Total errors | {metrics.total_errors} |",
-        f"| Avg cycle duration | {metrics.avg_cycle_duration_seconds}s |",
-        f"| Last scan | {metrics.last_cycle_at or 'n/a'} |",
-    ])
+    blocked_display = f"{blocked} (NEEDS ATTENTION)" if blocked else "0"
+    rows = [
+        ("Total scan cycles", str(metrics.total_cycles)),
+        ("Issues tracked", str(len(state.records))),
+        ("Sessions created", str(metrics.total_sessions_created)),
+        ("Success rate", f"{metrics.success_rate()}%"),
+        ("Blocked sessions", blocked_display),
+        ("Total errors", str(metrics.total_errors)),
+        ("Avg cycle duration", f"{metrics.avg_cycle_duration_seconds}s"),
+        ("Last scan", metrics.last_cycle_at or "n/a"),
+    ]
+    width = max(len(r[0]) for r in rows)
+    return "\n".join(f"  {label:<{width}}  {value}" for label, value in rows)
 
 
 def _outcomes_table(counts: dict[str, int]) -> str:
     if not counts:
         return "_No sessions tracked yet._"
-    lines = ["| Status | Count |", "|--------|-------|"]
+    lines = []
     for status, count in sorted(counts.items()):
-        lines.append(f"| `{status}` | {count} |")
+        lines.append(f"  {status:<12} {count}")
     return "\n".join(lines)
 
 
 def _issue_table(state: State) -> str:
     if not state.records:
-        return "_No issues processed yet._"
-    lines = [
-        "| Issue | Status | Session | PR |",
-        "|-------|--------|---------|----|",
-    ]
+        return "  (no issues processed yet)"
+    header = f"  {'Issue':<8} {'Status':<12} {'PR':<50} Session"
+    sep = "  " + "-" * (len(header) - 2)
+    lines = [header, sep]
     for number, rec in sorted(state.records.items()):
-        issue = f"[#{number}](https://github.com/{Config.TARGET_REPO}/issues/{number})"
-        session = f"[link]({rec.session_url})" if rec.session_url else "—"
-        pr = f"[PR]({rec.pr_url})" if rec.pr_url else "—"
-        lines.append(f"| {issue} | `{rec.status}` | {session} | {pr} |")
+        pr = rec.pr_url if rec.pr_url else "—"
+        session = rec.session_url if rec.session_url else "—"
+        lines.append(f"  #{number:<7} {rec.status:<12} {pr:<50} {session}")
     return "\n".join(lines)
 
 
 def _cycle_history_table(metrics: MetricsSummary) -> str:
-    lines = [
-        "| Cycle | Time | Duration | Scanned | Created | Failed | Errors |",
-        "|-------|------|----------|---------|---------|--------|--------|",
-    ]
+    # Fixed-width columns for clean console output
+    header = (
+        f"{'Cycle':>5}  {'Time':<20}  {'Duration':>8}  "
+        f"{'Scanned':>7}  {'Created':>7}  {'Done':>4}  "
+        f"{'Failed':>6}  {'Errors':>6}"
+    )
+    sep = "-" * len(header)
+    lines = [header, sep]
     for c in metrics.recent_cycles[-10:]:
         lines.append(
-            f"| {c['cycle']} | {c['at'][:19]} | {c['duration_s']}s "
-            f"| {c['scanned']} | {c['created']} | {c['failed']} | {c['errors']} |"
+            f"{c['cycle']:>5}  {c['at'][:19]:<20}  "
+            f"{str(c['duration_s']) + 's':>8}  "
+            f"{c['scanned']:>7}  {c['created']:>7}  "
+            f"{c.get('done', 0):>4}  "
+            f"{c['failed']:>6}  {c['errors']:>6}"
         )
     return "\n".join(lines)
 
