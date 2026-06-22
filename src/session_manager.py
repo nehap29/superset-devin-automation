@@ -36,8 +36,8 @@ class SessionStatus:
 
     @property
     def is_effectively_done(self) -> bool:
-        """True if terminal OR blocked-with-PR (task complete, awaiting user)."""
-        return self.is_terminal or (self.status == "blocked" and bool(self.pr_url))
+        """True if terminal, or blocked (no human in the loop to unblock)."""
+        return self.is_terminal or self.status == "blocked"
 
     @classmethod
     def from_api(cls, data: dict[str, Any]) -> SessionStatus:
@@ -52,7 +52,7 @@ class SessionStatus:
 
 
 # V1 API terminal statuses (session will not change further)
-_TERMINAL_STATUSES = frozenset({"finished", "expired"})
+_TERMINAL_STATUSES = frozenset({"finished", "expired", "blocked"})
 
 
 # ── Prompt builder ───────────────────────────────────────────────────

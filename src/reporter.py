@@ -60,6 +60,28 @@ def notify_session_created(record: SessionRecord) -> bool:
     return post_issue_comment(record.issue_number, body)
 
 
+def notify_session_blocked(record: SessionRecord) -> bool:
+    lines = [
+        "**Devin Automation** — session is **blocked** and needs attention.",
+        "",
+        "This is a fully automated system with no human in the loop, so "
+        "blocked sessions cannot be unblocked automatically.",
+        "",
+        f"| Field | Value |",
+        f"|-------|-------|",
+        f"| Status | `blocked` |",
+        f"| Session | {record.session_url} |",
+    ]
+    if record.pr_url:
+        lines.append(f"| Pull Request | {record.pr_url} |")
+    lines += [
+        "",
+        "Please review the session and unblock it manually, or close this "
+        "issue if no action is needed.",
+    ]
+    return post_issue_comment(record.issue_number, "\n".join(lines))
+
+
 def notify_session_update(record: SessionRecord) -> bool:
     lines = [
         "**Devin Automation** — status update.",
@@ -128,6 +150,9 @@ def generate_summary_report(state: State) -> str:
 
 
 def _health_table(metrics: MetricsSummary, state: State) -> str:
+    counts = state.count_by_status()
+    blocked = counts.get("blocked", 0)
+    blocked_display = f"**{blocked}** (needs attention)" if blocked else "0"
     return "\n".join([
         "| Metric | Value |",
         "|--------|-------|",
@@ -135,6 +160,7 @@ def _health_table(metrics: MetricsSummary, state: State) -> str:
         f"| Issues tracked | {len(state.records)} |",
         f"| Sessions created | {metrics.total_sessions_created} |",
         f"| Session creation success rate | {metrics.success_rate()}% |",
+        f"| Blocked sessions | {blocked_display} |",
         f"| Total errors | {metrics.total_errors} |",
         f"| Avg cycle duration | {metrics.avg_cycle_duration_seconds}s |",
         f"| Last scan | {metrics.last_cycle_at or 'n/a'} |",

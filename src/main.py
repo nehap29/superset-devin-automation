@@ -16,6 +16,7 @@ from src.config import Config
 from src.metrics import CycleTracker
 from src.reporter import (
     generate_summary_report,
+    notify_session_blocked,
     notify_session_created,
     notify_session_update,
 )
@@ -77,21 +78,25 @@ def run_once() -> None:
                 has_new_pr = bool(status.pr_url and not record.pr_url)
 
                 if changed or has_new_pr:
-                    # If session is blocked but has a PR, mark as finished
-                    effective_status = status.status
-                    if status.is_effectively_done and status.status == "blocked":
-                        effective_status = "finished"
-                        logger.info(
-                            "Issue #%d: session blocked with PR — marking finished",
-                            number,
-                        )
-
                     state.update_status(
-                        number, effective_status, status.pr_url
+                        number, status.status, status.pr_url
                     )
                     save_state(state)
-                    if notify_session_update(state.records[number]):
-                        cycle.comments_posted += 1
+
+                    if status.status == "blocked":
+                        logger.warning(
+                            "Issue #%d: session BLOCKED — no human in "
+                            "the loop to unblock (%s)",
+                            number,
+                            record.session_url,
+                        )
+                        cycle.errors.append(f"blocked(#{number})")
+                        if notify_session_blocked(state.records[number]):
+                            cycle.comments_posted += 1
+                    else:
+                        if notify_session_update(state.records[number]):
+                            cycle.comments_posted += 1
+
                     cycle.status_changes_detected += 1
             except Exception:
                 logger.exception(
